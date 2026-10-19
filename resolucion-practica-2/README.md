@@ -1,3 +1,18 @@
+
+- Nombre y `student_id`. Alejo Escalada. alejo_escalada1
+- Escala: small
+- Captura del DAG del Job con las cuatro tareas.
+<img width="1116" height="458" alt="image" src="https://github.com/user-attachments/assets/1e83cb23-f31e-4ad1-a6f2-7eed19b3c586" />
+- URL del Job o su nombre exacto. Nombre exacto: bigdata_alejo_escalada_silver_gold
+- Resultados de la primera y segunda ejecución.
+  
+job_run_id	expected_batch_id	silver_rows	quarantine_rows	gold_rows	gold_total_amount	recorded_at	idempotence_compared
+922335398137034	batch_002	50149	53	598	50286183.33	2026-10-03T13:06:59.485+00:00	false
+
+job_run_id	expected_batch_id	silver_rows	quarantine_rows	gold_rows	gold_total_amount	recorded_at	idempotence_compared
+642196193261294	batch_002	50149	53	598	50286183.33	2026-10-03T13:12:56.840+00:00	true
+922335398137034	batch_002	50149	53	598	50286183.33	2026-10-03T13:06:59.485+00:00	false
+
 # Clase práctica 2 — Silver, Gold y orquestación
 
 ## Propósito
@@ -310,32 +325,6 @@ resolucion-practica-2/
 ├── 04_validate_pipeline.ipynb
 └── 05_visualizacion.ipynb
 ```
-
-El `README.md` debe incluir:
-
-- Nombre y `student_id`. Alejo Escalada. alejo_escalada1
-- Captura del DAG del Job con las cuatro tareas.
-
-- URL del Job o su nombre exacto.
-![image_1791038759471.png](./image_1791038759471.png "image_1791038759471.png")
-
-- Resultados de la primera y segunda ejecución.
-|job_run_id|expected_batch_id|silver_rows|quarantine_rows|gold_rows|gold_total_amount|recorded_at|idempotence_compared|
-|---|---|---|---|---|---|---|---|
-|826449793655254|batch_002|50149|53|598|50286183.33|2026-10-03T13:03:48.888Z|false|
-
-|job_run_id|expected_batch_id|silver_rows|quarantine_rows|gold_rows|gold_total_amount|recorded_at|idempotence_compared|
-|---|---|---|---|---|---|---|---|
-|355827486323868|batch_002|50149|53|598|50286183.33|2026-10-03T13:06:05.685Z|true|
-|826449793655254|batch_002|50149|53|598|50286183.33|2026-10-03T13:03:48.888Z|false|
-
-
-- Cantidades aceptadas y rechazadas para `batch_002`.
-
-|source_batch_id|accepted_transactions|rejected_transactions|total_amount|fraud_transactions|refreshed_at|
-|---|---|---|---|---|---|
-|batch_002|201|2|146812.99|28|2026-10-03T13:05:43.737Z|
-|initial|49948|51|50139370.34|6560|2026-10-03T13:05:43.737Z|
 
 - Explicación breve de por qué `COPY INTO` y `MERGE` resuelven problemas diferentes.
 
