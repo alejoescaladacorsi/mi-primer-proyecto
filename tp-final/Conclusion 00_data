@@ -1,0 +1,141 @@
+
+# Diagnóstico de Calidad de Datos y Diseño de Transformaciones
+
+## 1. Introducción
+
+El presente análisis tiene como objetivo evaluar la calidad de los datos del conjunto **Olist Brazilian E-Commerce Public Dataset**, compuesto por nueve tablas relacionadas con clientes, pedidos, productos, pagos, vendedores, reseñas y ubicaciones geográficas.
+
+Durante la etapa de exploración se analizaron aspectos como la completitud de los registros, la unicidad de los identificadores, la integridad referencial, la consistencia temporal, la validez de los importes y las relaciones entre entidades.
+
+El objetivo no consiste únicamente en identificar anomalías, sino también en comprender sus posibles consecuencias y establecer criterios de tratamiento dentro de una arquitectura **Medallion**, organizada en las capas Bronze, Silver y Gold.
+
+Se adopta como principio fundamental la **preservación de la información original**, evitando eliminar registros o modificar valores sin una justificación técnica.
+
+---
+
+## 2. Matriz de diagnóstico de calidad de datos
+
+La siguiente tabla presenta los principales hallazgos identificados en cada una de las nueve fuentes.
+
+| Tabla | Información que contiene | Hallazgos del análisis exploratorio | Impacto potencial |
+|---|---|---|---|
+| **Customers** | Identificación de clientes y datos de ubicación. | No se encontraron identificadores `customer_id` duplicados ni referencias huérfanas desde la tabla de pedidos. | No se identificaron problemas relevantes en las relaciones analizadas. Es importante distinguir los identificadores de cliente y de comprador único para evitar errores en los conteos. |
+| **Orders** | Información general de las compras, estados, fechas y estimaciones de entrega. | Se identificaron **1.382 pedidos con inconsistencias temporales**, como entregas al transportista anteriores a la aprobación. También existen fechas faltantes. Adicionalmente, **775 pedidos carecen de artículos asociados** y **un pedido entregado no tiene registros de pago**. | Pueden generarse indicadores incorrectos de tiempos de procesamiento y entrega. Los pedidos también podrían perderse durante operaciones JOIN que exijan la existencia de artículos o pagos. |
+| **Order Items** | Productos incluidos en cada pedido, precios, vendedores y costos de envío. | Se encontraron **383 artículos con costo de envío igual a cero**, principalmente en pedidos entregados. La clave `(order_id, order_item_id)` es única y no se detectaron referencias huérfanas. | Los envíos con costo cero podrían corresponder a promociones y no necesariamente a errores. Además, las relaciones con pagos pueden multiplicar importes si no se controla la granularidad. |
+| **Order Payments** | Importes abonados, medios de pago, secuencias de pago y cuotas. | Se detectaron **9 pagos con importe cero** y **2 pagos con cero cuotas**, estos últimos con importes positivos. La clave `(order_id, payment_sequential)` es única. Un pedido puede tener varios pagos. | Los pagos con valor cero deben diferenciarse de los pagos ausentes. Las relaciones incorrectas con artículos pueden provocar duplicaciones en los indicadores financieros. |
+| **Order Reviews** | Calificaciones y comentarios de los clientes. | Se identificaron **814 registros adicionales respecto de los identificadores `review_id` distintos**. Sin embargo, `(review_id, order_id)` es único y no existen filas completamente duplicadas. Las puntuaciones están dentro del rango de 1 a 5. | Deduplicar únicamente por `review_id` podría eliminar reseñas legítimas y modificar incorrectamente los indicadores de satisfacción. |
+| **Products** | Catálogo de productos, categorías, descripciones, peso y dimensiones. | Se encontraron **610 productos sin categoría y ciertos atributos descriptivos**, **2 sin información física** y **4 con peso cero**. Los productos afectados aparecen en pedidos. | La información incompleta puede limitar los análisis por categoría y características físicas. Eliminar estos productos podría ocasionar la pérdida de información comercial válida. |
+| **Sellers** | Identificación y ubicación de los vendedores. | No se detectaron identificadores `seller_id` duplicados ni referencias huérfanas desde los artículos vendidos. | No se identificaron problemas relevantes en los controles realizados. |
+| **Geolocation** | Coordenadas, ciudades y estados asociados a prefijos postales. | Se identificaron **261.831 registros duplicados exactos**, múltiples coordenadas para un mismo prefijo y **8 prefijos asociados a diferentes estados**. | Relacionar directamente esta tabla con clientes o vendedores podría multiplicar registros y distorsionar indicadores geográficos o comerciales. |
+| **Category Translation** | Traducciones de categorías de productos al inglés. | Se encontraron **13 productos correspondientes a 2 categorías sin traducción**. Se decidió no priorizar este hallazgo. | Algunas categorías podrían no disponer de su nombre en inglés, pero esto no impide trabajar con los nombres originales. |
+
+### Interpretación general
+
+Los resultados muestran que la mayoría de las tablas presenta identificadores consistentes y relaciones referenciales válidas.
+
+Sin embargo, se identificaron situaciones que requieren atención antes de construir indicadores de negocio:
+
+- Registros con fechas que no siguen una secuencia temporal esperada.
+- Pedidos sin artículos o sin información de pagos.
+- Valores monetarios atípicos que no necesariamente representan errores.
+- Identificadores repetidos que no deben confundirse con registros duplicados.
+- Atributos incompletos en productos que participan de operaciones comerciales.
+- Múltiples registros geográficos asociados a un mismo prefijo postal.
+- Riesgos de multiplicación de importes al relacionar tablas con diferentes niveles de detalle.
+
+---
+
+## 3. Matriz de transformaciones propuestas por capa Medallion
+
+La arquitectura Medallion permite separar la conservación de los datos originales, su preparación técnica y la construcción de información útil para el análisis.
+
+Las transformaciones detalladas a continuación constituyen decisiones de diseño propuestas a partir del diagnóstico exploratorio. Su implementación se realizará en los notebooks correspondientes.
+
+| Tabla | Bronze — Conservación | Silver — Calidad y transformación | Gold — Indicadores de negocio |
+|---|---|---|---|
+| **Customers** | Ingestar todos los registros originales en formato Delta, incorporando metadatos de carga. | Validar la unicidad de `customer_id`, normalizar tipos y preservar la distinción entre `customer_id` y `customer_unique_id`. | Calcular cantidad de clientes, compradores únicos, distribución geográfica y comportamiento de compra. |
+| **Orders** | Conservar pedidos, estados y fechas originales, incluyendo valores faltantes y anomalías. | Normalizar fechas y generar indicadores como `flag_fecha_inconsistente`, `flag_sin_items` y `flag_sin_pagos`. Preservar todos los pedidos. | Calcular cantidad de pedidos, evolución de compras, estados operativos, tiempos de procesamiento y cumplimiento de entregas. |
+| **Order Items** | Almacenar todos los artículos, precios, costos de envío y relaciones con pedidos, productos y vendedores. | Controlar unicidad de `(order_id, order_item_id)`, validar importes y conservar envíos con costo cero. Aplicar deduplicación únicamente ante duplicados reales. | Calcular unidades vendidas, importes por artículos, costos de envío y desempeño por producto y vendedor. |
+| **Order Payments** | Conservar todos los componentes de pago, incluidos valores cero y pagos múltiples. | Validar `(order_id, payment_sequential)`, identificar importes y cuotas atípicos y preservar las operaciones sin imputaciones arbitrarias. | Calcular importes pagados, distribución por medios de pago, financiación y pagos agregados por pedido. |
+| **Order Reviews** | Preservar todas las reseñas, puntuaciones y comentarios originales. | Utilizar `(review_id, order_id)` como clave de unicidad observada. Validar puntuaciones y conservar comentarios faltantes como valores nulos. | Construir indicadores de satisfacción, puntuaciones promedio y distribución de calificaciones. |
+| **Products** | Conservar el catálogo completo, incluyendo atributos incompletos. | Validar `product_id`, identificar productos sin categoría, peso o dimensiones y registrar anomalías sin inventar valores. | Analizar ventas por producto, categoría y características disponibles. |
+| **Sellers** | Conservar todos los vendedores y sus datos originales. | Validar `seller_id`, normalizar tipos y preparar relaciones confiables con artículos. | Construir indicadores de ventas, participación comercial y distribución por vendedor. |
+| **Geolocation** | Preservar todas las observaciones originales, incluidos duplicados y diferencias geográficas. | Eliminar duplicados exactos en una tabla depurada con trazabilidad y preparar una representación única por prefijo postal mediante reglas determinísticas. | Realizar análisis geográficos sin multiplicar registros de clientes, vendedores o ventas. |
+| **Category Translation** | Ingestar la tabla original junto con las otras ocho fuentes. | No aplicar transformaciones adicionales específicas, salvo controles generales del pipeline. | Utilizar opcionalmente las traducciones disponibles, manteniendo la posibilidad de trabajar con categorías originales. |
+
+### Criterios generales de transformación
+
+**Bronze: preservación y trazabilidad**
+
+La capa Bronze almacenará los datos tal como fueron recibidos, sin aplicar eliminaciones ni correcciones sobre los registros originales.
+
+Se incorporarán metadatos técnicos para identificar el archivo de origen y la ejecución de carga.
+
+**Silver: confiabilidad y consistencia**
+
+La capa Silver aplicará normalización de tipos, validaciones de claves, controles de calidad y deduplicación cuando corresponda.
+
+Las anomalías se identificarán mediante indicadores específicos. Los registros originales no serán descartados únicamente por presentar información incompleta o valores atípicos.
+
+En los casos donde se requiera consolidar información, como en geolocalización, se definirán reglas reproducibles y se conservará la trazabilidad de las observaciones originales.
+
+**Gold: información analítica**
+
+La capa Gold transformará los datos preparados en indicadores orientados al análisis del negocio.
+
+Se prestará especial atención a la granularidad de las tablas, evitando duplicaciones durante las operaciones JOIN y diferenciando valores faltantes de valores efectivamente registrados en cero.
+
+---
+
+## 4. Matriz de riesgos y controles del pipeline
+
+Los hallazgos del análisis exploratorio permiten identificar riesgos concretos que deberán controlarse durante el procesamiento.
+
+| Riesgo identificado | Explicación para público general | Control propuesto | Resultado esperado |
+|---|---|---|---|
+| **Pérdida de registros** | Algunos pedidos y productos tienen información incompleta. Eliminarlos podría significar perder operaciones comerciales reales. | Preservar registros y registrar indicadores de anomalías. Comparar cantidades entre capas y justificar las diferencias. | Mantener la información disponible y asegurar que las exclusiones analíticas, cuando correspondan, sean explícitas. |
+| **Duplicación de ventas** | Un pedido puede tener varios artículos y varios pagos. Al cruzar ambas tablas directamente, un mismo importe puede aparecer repetido. | Controlar la granularidad y agregar pagos y artículos por pedido antes de combinarlos. | Obtener indicadores financieros sin duplicaciones artificiales. |
+| **Eliminación incorrecta de reseñas** | Un identificador de reseña puede repetirse en pedidos diferentes sin representar un registro duplicado. | Utilizar la clave compuesta `(review_id, order_id)` y validar unicidad. | Conservar las reseñas legítimas y evitar distorsiones en los indicadores de satisfacción. |
+| **Indicadores logísticos incorrectos** | Algunas fechas no siguen el orden habitual de procesamiento de un pedido. | Detectar inconsistencias temporales y establecer criterios de elegibilidad para cada indicador. | Calcular tiempos y cumplimiento de entregas con reglas explícitas. |
+| **Información financiera incompleta** | Un pedido entregado no tiene información de pago. Esto no significa necesariamente que su importe sea cero. | Diferenciar ausencia de registros de pago de importes registrados en cero. | Evitar interpretar datos faltantes como pagos gratuitos. |
+| **Distorsión geográfica** | Un código postal puede aparecer múltiples veces en la tabla geográfica. | Utilizar una representación consolidada con una fila por prefijo postal para los cruces analíticos. | Evitar multiplicaciones de clientes, vendedores y ventas. |
+| **Duplicación entre ejecuciones** | Ejecutar varias veces el pipeline podría volver a incorporar los mismos registros. | Implementar procesamiento idempotente y controles de auditoría de ejecuciones. | Obtener resultados reproducibles al procesar nuevamente las mismas fuentes. |
+
+### Importancia de los controles
+
+La identificación de estos riesgos permite que las transformaciones respondan a problemas observados y no a decisiones arbitrarias.
+
+Por ejemplo, eliminar automáticamente todos los registros incompletos podría simplificar el procesamiento, pero también provocaría pérdidas de información.
+
+De manera similar, eliminar registros repetidos sin comprender sus claves de negocio podría reducir artificialmente el número de reseñas o alterar la representación de las operaciones comerciales.
+
+Por lo tanto, la calidad de datos no se interpreta únicamente como la ausencia de valores nulos o duplicados, sino como la capacidad de **producir información confiable, consistente y trazable**.
+
+---
+
+## 5. Resumen de responsabilidades por capa
+
+| Componente | Objetivo principal | Tratamiento de los problemas detectados | Entregable esperado |
+|---|---|---|---|
+| **Bronze** | Preservar los datos originales. | No eliminar ni corregir anomalías. Registrar información de procedencia y carga. | Nueve tablas Delta con información original y trazabilidad. |
+| **Silver** | Preparar datos confiables y consistentes. | Normalizar tipos, validar claves, identificar anomalías y aplicar deduplicación justificada. | Tablas depuradas, indicadores de calidad y estructuras preparadas para relaciones seguras. |
+| **Gold** | Producir información útil para el negocio. | Definir reglas de cálculo, controlar granularidad y distinguir información faltante de valores reales. | Indicadores comerciales, financieros, logísticos y de satisfacción. |
+| **Orquestación y validación** | Automatizar y verificar el procesamiento. | Ejecutar controles de calidad, verificar resultados y registrar cada ejecución. | Databricks Jobs, validaciones automáticas y auditoría del pipeline. |
+
+---
+
+## 6. Conclusión
+
+El análisis exploratorio de las nueve tablas del dataset Olist permitió identificar problemas relacionados con completitud, consistencia temporal, duplicación, granularidad y cobertura de relaciones entre entidades.
+
+Si bien las claves principales y las relaciones referenciales analizadas presentaron resultados favorables, se detectaron situaciones capaces de afectar la interpretación de los datos y la construcción de indicadores comerciales.
+
+Entre los hallazgos más relevantes se encuentran los pedidos con secuencias temporales inconsistentes, los registros financieros atípicos, los atributos incompletos de productos, las particularidades de identificación de las reseñas y la elevada repetición de observaciones geográficas.
+
+A partir de estos resultados se definieron criterios de transformación para las distintas capas de la arquitectura Medallion.
+
+La capa **Bronze** garantizará la conservación de los datos originales y su trazabilidad. La capa **Silver** permitirá normalizar, validar y preparar la información mediante reglas reproducibles, mientras que la capa **Gold** estará orientada a generar indicadores analíticos consistentes y comprensibles.
+
+Finalmente, la incorporación de mecanismos de **orquestación, validación e idempotencia** permitirá transformar este procesamiento en un pipeline automatizado y reproducible.
+
+En conjunto, estas decisiones establecen una base técnica para construir un Lakehouse que no solo almacene información, sino que también permita utilizarla de manera confiable para el análisis y la toma de decisiones.
